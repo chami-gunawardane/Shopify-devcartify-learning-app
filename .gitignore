@@ -29,3 +29,4 @@ database.sqlite
 .cursor/
 
 .DS_Store
+.gemini/
