@@ -2,130 +2,79 @@ import { authenticate } from "../shopify.server";
 import { json } from "@remix-run/node";
 
 export async function action({ request }) {
-  console.log("Received request to update Adapt details");
+  const { admin } = await authenticate.admin(request);
   
-  // Only allow POST requests
-  if (request.method !== "POST") {
-    return json({ error: "Method not allowed" }, { status: 405 });
+  // FIX: Read as formData instead of json
+  const formData = await request.formData();
+  const invoiceNumber = formData.get("invoiceNumber");
+
+  console.log("Processing fulfillment for order:", invoiceNumber);
+
+  if (!invoiceNumber) {
+    return json({ error: "No order number provided" }, { status: 400 });
   }
 
   try {
-    const { admin } = await authenticate.admin(request);
-    const body = await request.json();
-    const invoiceNumber = body.invoiceNumber;
-
-    console.log("Adapt details received:", body);
-
-    // Query to find the order by invoice number
-    const orderQuery = `
-      query {
-        orders(first: 1, query: "name:${invoiceNumber}") {
+    // 1. Get the Fulfillment Order ID for this Order Name
+    const orderResponse = await admin.graphql(
+      `#graphql
+      query getOrder($query: String!) {
+        orders(first: 1, query: $query) {
           edges {
             node {
               id
-              name
-              fulfillmentOrders(first: 10, query: "status:OPEN OR status:SCHEDULED") {
+              fulfillmentOrders(first: 5, displayable: true) {
                 edges {
                   node {
                     id
                     status
-                    lineItems(first: 10) {
-                      edges {
-                        node {
-                          id
-                          quantity
-                        }
-                      }
-                    }
                   }
                 }
               }
             }
           }
         }
-      }
-    `;
+      }`,
+      { variables: { query: `name:${invoiceNumber}` } }
+    );
 
-    const orderResponse = await admin.graphql(orderQuery);
     const orderData = await orderResponse.json();
+    const orderNode = orderData.data?.orders?.edges[0]?.node;
 
-    console.log("Order query response:", JSON.stringify(orderData, null, 2));
-
-    if (orderData.errors) {
-      return json({ error: orderData.errors }, { status: 400 });
+    if (!orderNode) {
+      return json({ error: `Order ${invoiceNumber} not found. Ensure you include the # (e.g. #1001)` }, { status: 404 });
     }
 
-    if (!orderData.data?.orders?.edges?.length) {
-      return json({ error: "Order not found" }, { status: 404 });
+    const openFulfillmentOrders = orderNode.fulfillmentOrders.edges
+      .filter(edge => edge.node.status === "OPEN")
+      .map(edge => ({ fulfillmentOrderId: edge.node.id }));
+
+    if (openFulfillmentOrders.length === 0) {
+      return json({ error: "This order is already fulfilled or has no open fulfillment orders." });
     }
 
-    const order = orderData.data.orders.edges[0].node;
-    const fulfillmentOrders = order.fulfillmentOrders.edges;
-
-    if (!fulfillmentOrders.length) {
-      return json({ error: "No fulfillment orders found" }, { status: 400 });
-    }
-
-    // Build the fulfillment input
-    const fulfillmentInput = fulfillmentOrders.map(({ node }) => ({
-      id: node.id,
-      lineItems: node.lineItems.edges.map((edge) => ({
-        id: edge.node.id,
-        quantity: edge.node.quantity,
-      })),
-    }));
-
-    // Create fulfillment mutation
-    const fulfillmentMutation = `
-      mutation fulfillOrders($fulfillmentOrders: [FulfillmentOrderInput!]!) {
-        fulfillmentOrdersFulfill(fulfillmentOrders: $fulfillmentOrders) {
-          fulfillmentOrders {
-            id
-            status
-          }
-          userErrors {
-            field
-            message
-          }
+    // 2. Fulfill the Order
+    const fulfillMutation = await admin.graphql(
+      `#graphql
+      mutation fulfillmentCreate($fulfillment: FulfillmentInput!) {
+        fulfillmentCreate(fulfillment: $fulfillment) {
+          fulfillment { id }
+          userErrors { message }
         }
-      }
-    `;
+      }`,
+      { variables: { fulfillment: { lineItemsByFulfillmentOrder: openFulfillmentOrders } } }
+    );
 
-    const fulfillmentResponse = await admin.graphql(fulfillmentMutation, {
-      variables: {
-        fulfillmentOrders: fulfillmentInput,
-      },
-    });
+    const result = await fulfillMutation.json();
     
-    const fulfillmentData = await fulfillmentResponse.json();
-
-    console.log("Fulfillment response:", JSON.stringify(fulfillmentData, null, 2));
-
-    if (fulfillmentData.errors) {
-      return json({ error: fulfillmentData.errors }, { status: 400 });
+    if (result.data?.fulfillmentCreate?.userErrors?.length > 0) {
+        return json({ error: result.data.fulfillmentCreate.userErrors[0].message }, { status: 400 });
     }
 
-    if (fulfillmentData.data?.fulfillmentOrdersFulfill?.userErrors?.length) {
-      return json({ error: fulfillmentData.data.fulfillmentOrdersFulfill.userErrors }, { status: 400 });
-    }
+    return json({ success: true, details: result.data });
 
-    console.log("Order fulfilled successfully:", fulfillmentData.data.fulfillmentOrdersFulfill.fulfillmentOrders);
-
-    return json({ 
-      success: true,
-      data: fulfillmentData.data.fulfillmentOrdersFulfill 
-    });
   } catch (error) {
-    console.error("Error fulfilling order:", error);
-    
-    // Check if it's an auth error
-    if (error.status === 410 || error.message?.includes("410")) {
-      return json(
-        { error: "Unauthorized - Please make this request from within the Shopify app" }, 
-        { status: 401 }
-      );
-    }
-    
-    return json({ error: error.message || "Internal server error" }, { status: 500 });
+    console.error("Fulfillment Logic Error:", error);
+    return json({ error: error.message }, { status: 500 });
   }
 }
