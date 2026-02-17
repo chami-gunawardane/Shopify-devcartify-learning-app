@@ -13,11 +13,17 @@ export default function Index() {
   const fetcher = useFetcher();
   const [orderName, setOrderName] = useState("#1001");
 
+  // --- UPDATED LOGIC FOR TOASTS ONLY ---
   useEffect(() => {
-    if (fetcher.data?.success) {
-      shopify.toast.show("Order Fulfilled Successfully!");
-    } else if (fetcher.data?.error) {
-      shopify.toast.show("Fulfillment Failed. See details below.", { isError: true });
+    if (fetcher.data) {
+      // Check for "status === 'success'" as defined in your backend
+      if (fetcher.data.status === "success") {
+        shopify.toast.show(fetcher.data.message || "Order Fulfilled Successfully!");
+      } 
+      // Check for ".error" as defined in your backend
+      else if (fetcher.data.error) {
+        shopify.toast.show(fetcher.data.error, { isError: true });
+      }
     }
   }, [fetcher.data, shopify]);
 
@@ -47,14 +53,8 @@ export default function Index() {
           </button>
         </div>
 
-        {fetcher.data && (
-          <div style={{ marginTop: "30px", padding: "20px", borderRadius: "8px", backgroundColor: fetcher.data.success ? "#e6f4ea" : "#fce8e6", border: "1px solid #dfe3e8" }}>
-            <h3 style={{ marginTop: 0 }}>Server Response:</h3>
-            <pre style={{ overflow: "auto", fontSize: "12px", whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(fetcher.data, null, 2)}
-            </pre>
-          </div>
-        )}
+        {/* --- REMOVED THE VISIBLE SERVER RESPONSE BLOCK HERE --- */}
+        {/* Only the toasts will show now */}
       </div>
     </div>
   );

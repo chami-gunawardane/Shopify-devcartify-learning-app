@@ -2,7 +2,7 @@
 
 client_id = "b70785f5a282bd9d6b6700f177d04928"
 name = "devcartify-learning-app"
-application_url = "https://example.com"
+application_url = "https://devcartify-learning-app.fly.dev"
 embedded = true
 
 [build]
@@ -24,4 +24,13 @@ api_version = "2026-04"
 scopes = "read_orders, write_orders, read_fulfillments, write_fulfillments, read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://devcartify-learning-app.fly.dev/auth/callback",
+  "https://devcartify-learning-app.fly.dev/auth/shopify/callback",
+  "https://devcartify-learning-app.fly.dev/api/auth/callback"
+]
+
+
+[[webhooks.subscriptions]]
+topics = [ "app/uninstalled" ]
+uri = "/webhooks/app/uninstalled"

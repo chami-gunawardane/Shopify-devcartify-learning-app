@@ -1,21 +1,53 @@
-import { authenticate } from "../shopify.server";
+import { authenticate, unauthenticated } from "../shopify.server";
 import { json } from "@remix-run/node";
 
-export async function action({ request }) {
-  const { admin } = await authenticate.admin(request);
-  
-  // FIX: Read as formData instead of json
-  const formData = await request.formData();
-  const invoiceNumber = formData.get("invoiceNumber");
+async function handleRequest(args) {
+  const { request } = args;
+  let shopDomain = null;
+  let invoiceNo = null;
 
-  console.log("Processing fulfillment for order:", invoiceNumber);
-
-  if (!invoiceNumber) {
-    return json({ error: "No order number provided" }, { status: 400 });
+  // 1. AUTHENTICATION (Internal Session OR External API Key)
+  try {
+    const { session } = await authenticate.admin(request);
+    shopDomain = session.shop;
+  } catch (e) {
+    const authHeader = request.headers.get("X-Adapt-Key");
+    if (authHeader !== process.env.X_ADAPT_KEY) {
+      return json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
+  // 2. DATA PARSING
   try {
-    // 1. Get the Fulfillment Order ID for this Order Name
+    const url = new URL(request.url);
+    invoiceNo = url.searchParams.get("invoiceNo") || url.searchParams.get("invoiceNumber");
+    if (!shopDomain) shopDomain = url.searchParams.get("shop");
+
+    if (request.method !== "GET") {
+      const contentType = request.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const body = await request.json();
+        invoiceNo = invoiceNo || body.invoiceNumber || body.invoiceNo;
+        if (!shopDomain) shopDomain = body.shop;
+      } else {
+        const formData = await request.formData();
+        invoiceNo = invoiceNo || formData.get("invoiceNumber") || formData.get("invoiceNo");
+        if (!shopDomain) shopDomain = formData.get("shop");
+      }
+    }
+  } catch (err) {
+    console.error("⚠️ Parser Error:", err.message);
+  }
+
+  if (!invoiceNo || !shopDomain) {
+    return json({ error: "Invoice Number is required" }, { status: 400 });
+  }
+
+  // 3. SHOPIFY FULFILLMENT LOGIC
+  try {
+    const { admin } = await unauthenticated.admin(shopDomain);
+    const searchQuery = invoiceNo.startsWith("#") ? invoiceNo : `#${invoiceNo}`;
+
     const orderResponse = await admin.graphql(
       `#graphql
       query getOrder($query: String!) {
@@ -24,36 +56,30 @@ export async function action({ request }) {
             node {
               id
               fulfillmentOrders(first: 5, displayable: true) {
-                edges {
-                  node {
-                    id
-                    status
-                  }
-                }
+                edges { node { id status } }
               }
             }
           }
         }
       }`,
-      { variables: { query: `name:${invoiceNumber}` } }
+      { variables: { query: `name:${searchQuery}` } },
     );
 
     const orderData = await orderResponse.json();
-    const orderNode = orderData.data?.orders?.edges[0]?.node;
+    const orderNode = orderData?.data?.orders?.edges?.[0]?.node;
 
     if (!orderNode) {
-      return json({ error: `Order ${invoiceNumber} not found. Ensure you include the # (e.g. #1001)` }, { status: 404 });
+      return json({ error: `Order ${searchQuery} not found` }, { status: 404 });
     }
 
-    const openFulfillmentOrders = orderNode.fulfillmentOrders.edges
-      .filter(edge => edge.node.status === "OPEN")
-      .map(edge => ({ fulfillmentOrderId: edge.node.id }));
+    const openFulfillments = orderNode.fulfillmentOrders.edges
+      .filter((edge) => edge.node.status === "OPEN")
+      .map((edge) => ({ fulfillmentOrderId: edge.node.id }));
 
-    if (openFulfillmentOrders.length === 0) {
-      return json({ error: "This order is already fulfilled or has no open fulfillment orders." });
+    if (openFulfillments.length === 0) {
+      return json({ status: "info", message: "Order is already fulfilled" });
     }
 
-    // 2. Fulfill the Order
     const fulfillMutation = await admin.graphql(
       `#graphql
       mutation fulfillmentCreate($fulfillment: FulfillmentInput!) {
@@ -62,19 +88,31 @@ export async function action({ request }) {
           userErrors { message }
         }
       }`,
-      { variables: { fulfillment: { lineItemsByFulfillmentOrder: openFulfillmentOrders } } }
+      { variables: { fulfillment: { lineItemsByFulfillmentOrder: openFulfillments } } },
     );
 
     const result = await fulfillMutation.json();
-    
-    if (result.data?.fulfillmentCreate?.userErrors?.length > 0) {
-        return json({ error: result.data.fulfillmentCreate.userErrors[0].message }, { status: 400 });
-    }
+    const finalId = result.data?.fulfillmentCreate?.fulfillment?.id;
 
-    return json({ success: true, details: result.data });
+    if (!finalId) {
+      return json({ error: "Shopify fulfillment failed", details: result.data?.fulfillmentCreate?.userErrors }, { status: 400 });
+    } 
+    
+    // SUCCESS LOG FOR FLY LOGS
+    console.log(`✅ Success: ${searchQuery} fulfilled.`);
+
+    // THIS IS THE SUCCESS DATA
+    return json({ 
+      status: "success", 
+      message: `Order ${searchQuery} fulfilled successfully!`,
+      fulfillment_id: finalId 
+    });
 
   } catch (error) {
-    console.error("Fulfillment Logic Error:", error);
-    return json({ error: error.message }, { status: 500 });
+    console.error("🔥 Server Error:", error.message);
+    return json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
+
+export async function loader(args) { return handleRequest(args); }
+export async function action(args) { return handleRequest(args); }
