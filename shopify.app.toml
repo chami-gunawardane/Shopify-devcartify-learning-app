@@ -2,7 +2,7 @@
 
 client_id = "e6e32e2eae587c797f8fe3a832b27a40"
 name = "devcartify-app"
-application_url = "https://devcartify-final.fly.dev"
+application_url = "https://devcartify-app.fly.dev"
 embedded = true
 
 [build]
@@ -21,7 +21,7 @@ scopes = "read_orders, write_orders, read_fulfillments, write_fulfillments, read
 
 [auth]
 redirect_urls = [
-  "https://devcartify-final.fly.dev/auth/callback",
-  "https://devcartify-final.fly.dev/auth/shopify/callback",
-  "https://devcartify-final.fly.dev/api/auth/callback"
+  "https://devcartify-app.fly.dev/auth/callback",
+  "https://devcartify-app.fly.dev/auth/shopify/callback",
+  "https://devcartify-app.fly.dev/api/auth/callback"
 ]

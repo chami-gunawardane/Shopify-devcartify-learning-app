@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for devcartify-final on 2026-02-19T12:29:45+05:30
+# fly.toml app configuration file generated for devcartify-app on 2026-02-19T15:52:17+05:30
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'devcartify-final'
-primary_region = 'fra'
+app = 'devcartify-app'
+primary_region = 'nrt'
 
 [build]
 
@@ -13,7 +13,7 @@ primary_region = 'fra'
   PORT = '3000'
   SCOPES = 'read_fulfillments,read_merchant_managed_fulfillment_orders,read_orders,write_fulfillments,write_merchant_managed_fulfillment_orders,write_orders'
   SHOPIFY_API_KEY = 'e6e32e2eae587c797f8fe3a832b27a40'
-  SHOPIFY_APP_URL = 'https://devcartify-final.fly.dev'
+  SHOPIFY_APP_URL = 'https://devcartify-app.fly.dev'
 
 [http_service]
   internal_port = 3000
